@@ -1,33 +1,38 @@
 import logging
 import os
 import re
+from flask import Flask
+from threading import Thread
 from telegram import Update
-from telegram.error import TelegramError
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-# Logging setup
+# -------- Flask Keep Alive --------
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running ✅"
+
+def run_flask():
+    app.run(host="0.0.0.0", port=8080)
+
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.start()
+
+# -------- Logging --------
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Environment
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-MAIN_CHANNEL = os.getenv("MAIN_CHANNEL", "@DealLoot_India")
 
 # -------- Platform Templates --------
 def get_template(text: str, links: list) -> str:
-    text = text or ""
-    text_lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    preview = text_lines[0] if text_lines else "Product"
-
     text_lower = text.lower()
+    text = re.sub(r"@\w+", "", text).strip()
 
-    # Remove other @usernames (but keep whitespace)
-    sanitized = re.sub(r"@\w+", "", text).strip()
-
-    # Detect platform
     if "amazon" in text_lower:
         header = "🔥 Amazon Loot Deal! 🔥"
         price_line = "💰 Price: Just ___"
@@ -64,98 +69,56 @@ def get_template(text: str, links: list) -> str:
         tagline = "⚡ Limited Time Offer"
         hashtags = "#DealLootIndia #LootDeal"
 
-    # Format links (collect lines that look like links)
     formatted_links = []
-    for ln in text_lines:
-        if "http" in ln:
-            formatted_links.append(ln)
+    for line in text.splitlines():
+        if "http" in line:
+            formatted_links.append(line.strip())
 
-    # Build final message
-    msg = [header]
-    msg.append(f"🛒 Product: {preview}")
-    msg.append(price_line)
-    if tagline:
-        msg.append(tagline)
-    msg.append("")
-    msg.append("👉 Grab Here:")
-    if formatted_links:
-        msg.extend(formatted_links)
-    else:
-        # If no link lines detected, try the links param
-        msg.extend(links or [])
+    response = f"""{header}
+🛒 Product: {text.splitlines()[0]}
+{price_line}
+{tagline}
 
-    msg.append("")
-    msg.append(f"👉 Follow {MAIN_CHANNEL} for 🔥 daily loot deals!")
-    msg.append("")
-    msg.append(hashtags)
+👉 Grab Here:
+""" + "\n".join(formatted_links) + f"""
 
-    return "\n".join(msg)
+👉 Follow @DealLoot_India for 🔥 daily loot deals!
 
-
-# -------- Error handler --------
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Log the error and do not crash the bot."""
-    logger.error("Exception while handling an update:", exc_info=True)
-    # Optionally notify the developer (commented out for privacy)
-    try:
-        if isinstance(context.error, TelegramError):
-            logger.error(f"Telegram error: {context.error}")
-    except Exception:
-        # context may be None in some error cases
-        pass
-
+{hashtags}
+"""
+    return response
 
 # -------- Handlers --------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Bot is running ✅")
 
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
-    if not message:
+    text = message.caption if message.caption else message.text
+    if not text:
+        await message.reply_text("⚠️ Please send text or photo with caption.")
         return
 
-    try:
-        text = message.caption if message.caption else message.text
-        if not text or not text.strip():
-            await message.reply_text("⚠️ Please send text or photo with caption.")
-            return
+    links = re.findall(r"(https?://\S+)", text)
+    response = get_template(text, links)
 
-        links = re.findall(r"(https?://\S+|www\.\S+)", text)
-        response = get_template(text, links)
-
-        if message.photo:
-            # reply with same photo and formatted caption
-            await message.reply_photo(photo=message.photo[-1].file_id, caption=response)
-        else:
-            await message.reply_text(response)
-
-    except TelegramError as e:
-        logger.error(f"Telegram error while processing message: {e}")
-    except Exception as e:
-        logger.exception(f"Unexpected error in handle_message: {e}")
-
+    if message.photo:
+        await message.reply_photo(photo=message.photo[-1].file_id, caption=response)
+    else:
+        await message.reply_text(response)
 
 # -------- Main --------
-
 def main():
     if not BOT_TOKEN:
-        raise ValueError("⚠️ BOT_TOKEN environment variable is required")
+        raise ValueError("⚠️ BOT_TOKEN not set in Render Environment Variables!")
 
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    # Handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler((filters.TEXT & ~filters.COMMAND) | filters.PHOTO, handle_message))
-
-    # Error handler
-    app.add_error_handler(error_handler)
+    app_tg = Application.builder().token(BOT_TOKEN).build()
+    app_tg.add_handler(CommandHandler("start", start))
+    app_tg.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
 
     logger.info("Bot started in polling mode ✅")
-
-    # run polling (suitable when deploying as a background worker)
-    app.run_polling()
-
+    app_tg.run_polling()
 
 if __name__ == "__main__":
+    keep_alive()  # Flask server background me chalega
     main()
