@@ -1,4 +1,3 @@
-from keep_alive import keep_alive   # 
 import logging
 import os
 import re
@@ -114,5 +113,4 @@ def main():
 
 
 if __name__ == "__main__":
-    keep_alive()   # 🔹 NEW LINE
-    main()
+ main()
