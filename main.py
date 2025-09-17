@@ -27,6 +27,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+GROUP_ID = os.getenv("GROUP_ID")  # Private group ID for forwarding
 
 # -------- Platform Templates --------
 def get_template(text: str, links: list) -> str:
@@ -102,10 +103,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     links = re.findall(r"(https?://\S+)", text)
     response = get_template(text, links)
 
+    # ---------- Original reply ----------
     if message.photo:
         await message.reply_photo(photo=message.photo[-1].file_id, caption=response)
     else:
         await message.reply_text(response)
+
+    # ---------- Forward to Private Group ----------
+    if GROUP_ID:
+        try:
+            if message.photo:
+                await context.bot.send_photo(chat_id=int(GROUP_ID),
+                                             photo=message.photo[-1].file_id,
+                                             caption=response)
+            else:
+                await context.bot.send_message(chat_id=int(GROUP_ID), text=response)
+            logger.info(f"Message forwarded to {GROUP_ID}")
+        except Exception as e:
+            logger.error(f"Forwarding error: {e}")
 
 # -------- Main --------
 def main():
